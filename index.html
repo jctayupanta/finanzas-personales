@@ -8,13 +8,22 @@
 </head>
 <body>
 <header class="topbar">
-  <h1>💰 Mis Finanzas</h1>
+  <div class="topbar-row">
+    <h1>💰 Mis Finanzas</h1>
+    <div class="backup-bar">
+      <button class="btn secondary small" id="export-btn">⬇ Exportar datos</button>
+      <button class="btn secondary small" id="import-btn">⬆ Importar datos</button>
+      <input type="file" id="import-file-input" accept="application/json" hidden>
+    </div>
+  </div>
   <nav class="tabs" id="tabs">
     <button class="tab-btn active" data-tab="dashboard">Resumen</button>
     <button class="tab-btn" data-tab="registro">Registro rápido</button>
+    <button class="tab-btn" data-tab="fijos">Gastos fijos</button>
     <button class="tab-btn" data-tab="movimientos">Movimientos</button>
     <button class="tab-btn" data-tab="deudas">Deudas</button>
     <button class="tab-btn" data-tab="cobrar">Por cobrar</button>
+    <button class="tab-btn" data-tab="comparar">Comparar</button>
   </nav>
 </header>
 

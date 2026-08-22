@@ -10,19 +10,32 @@ const CATEGORIES = {
 };
 
 const STORAGE_KEY = "finanzas_personales_v1";
+const CUSTOM_CATEGORY = "__otro__";
 
 function uid() {
   return (crypto.randomUUID ? crypto.randomUUID() : "id-" + Date.now() + "-" + Math.random().toString(16).slice(2));
 }
 
+// Normalizes any previously-saved (or imported) state shape into the current
+// shape, backfilling missing fields instead of discarding unknown data.
+function migrateState(raw) {
+  const s = raw && typeof raw === "object" ? raw : {};
+  return {
+    transactions: Array.isArray(s.transactions) ? s.transactions : [],
+    debts: Array.isArray(s.debts) ? s.debts : [],
+    receivables: Array.isArray(s.receivables) ? s.receivables : [],
+    fixedExpenses: Array.isArray(s.fixedExpenses) ? s.fixedExpenses : []
+  };
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) return migrateState(JSON.parse(raw));
   } catch (e) {
     console.error("Error cargando datos", e);
   }
-  return { transactions: [], debts: [], receivables: [] };
+  return migrateState(null);
 }
 
 function saveState() {
@@ -85,6 +98,44 @@ function escapeHtml(str) {
   }[c]));
 }
 
+function currentRealMonth() {
+  return todayISO().slice(0, 7);
+}
+
+function categoryGroup(cat) {
+  for (const [group, cats] of Object.entries(CATEGORIES.gasto)) {
+    if (cats.includes(cat)) return group;
+  }
+  return null;
+}
+
+// ---------- Gastos fijos ----------
+
+function isFixedConfirmed(fixedExpenseId, mKey) {
+  return state.transactions.some(t => t.fixedExpenseId === fixedExpenseId && monthKey(t.date) === mKey);
+}
+
+function pendingFixedExpenses(mKey) {
+  return state.fixedExpenses.filter(fe => !isFixedConfirmed(fe.id, mKey));
+}
+
+function confirmFixedExpense(fixedExpenseId, amount) {
+  const fe = state.fixedExpenses.find(f => f.id === fixedExpenseId);
+  if (!fe) return;
+  const amt = Number(amount) > 0 ? Number(amount) : fe.amount;
+  state.transactions.push({
+    id: uid(),
+    type: "gasto",
+    category: fe.category,
+    amount: amt,
+    date: todayISO(),
+    note: fe.name && fe.name !== fe.category ? fe.name : "",
+    fixedExpenseId: fe.id,
+    source: "fijo"
+  });
+  saveState();
+}
+
 // ---------- App state ----------
 
 let activeTab = "dashboard";
@@ -92,6 +143,7 @@ let dashboardMonth = todayISO().slice(0, 7);
 let movMonthFilter = todayISO().slice(0, 7);
 let movTypeFilter = "todos";
 let entryType = "gasto";
+let cmpRange = 3;
 
 // ---------- Rendering ----------
 
@@ -104,9 +156,11 @@ function render() {
 
   if (activeTab === "dashboard") app.innerHTML = renderDashboard();
   else if (activeTab === "registro") app.innerHTML = renderRegistro();
+  else if (activeTab === "fijos") app.innerHTML = renderFijos();
   else if (activeTab === "movimientos") app.innerHTML = renderMovimientos();
   else if (activeTab === "deudas") app.innerHTML = renderDeudas();
   else if (activeTab === "cobrar") app.innerHTML = renderCobrar();
+  else if (activeTab === "comparar") app.innerHTML = renderComparar();
 
   attachHandlers();
 }
@@ -116,7 +170,12 @@ function render() {
 function computeMonthTotals(key) {
   const txs = state.transactions.filter(t => monthKey(t.date) === key);
   const ingresos = txs.filter(t => t.type === "ingreso").reduce((s, t) => s + t.amount, 0);
-  const gastos = txs.filter(t => t.type === "gasto").reduce((s, t) => s + t.amount, 0);
+  const gastoTxs = txs.filter(t => t.type === "gasto");
+  const gastos = gastoTxs.reduce((s, t) => s + t.amount, 0);
+
+  const gastosFijos = gastoTxs.filter(t => t.source === "fijo" || categoryGroup(t.category) === "Fijos").reduce((s, t) => s + t.amount, 0);
+  const gastosVariables = gastoTxs.filter(t => categoryGroup(t.category) === "Variables").reduce((s, t) => s + t.amount, 0);
+  const gastosAhorro = gastoTxs.filter(t => categoryGroup(t.category) === "Ahorro/inversión").reduce((s, t) => s + t.amount, 0);
 
   const deudasComprometidas = state.debts
     .filter(d => d.remainingMonths > 0)
@@ -124,12 +183,21 @@ function computeMonthTotals(key) {
 
   const saldo = ingresos - gastos - deudasComprometidas;
 
+  const disponibleLibre = ingresos - gastosFijos - deudasComprometidas - gastosVariables;
+  let semaforo = "red";
+  if (disponibleLibre > 100) semaforo = "green";
+  else if (disponibleLibre > 0) semaforo = "yellow";
+
   const byCategory = {};
-  txs.filter(t => t.type === "gasto").forEach(t => {
+  gastoTxs.forEach(t => {
     byCategory[t.category] = (byCategory[t.category] || 0) + t.amount;
   });
 
-  return { ingresos, gastos, deudasComprometidas, saldo, byCategory, txCount: txs.length };
+  return {
+    ingresos, gastos, gastosFijos, gastosVariables, gastosAhorro,
+    deudasComprometidas, saldo, disponibleLibre, semaforo,
+    byCategory, txCount: txs.length
+  };
 }
 
 function renderDashboard() {
@@ -152,7 +220,20 @@ function renderDashboard() {
   const activeDebts = state.debts.filter(d => d.remainingMonths > 0);
   const pendingReceivables = state.receivables.filter(r => !r.paid);
 
+  const realMonth = currentRealMonth();
+  const pendingFixed = pendingFixedExpenses(realMonth);
+  const pendingBanner = pendingFixed.length ? `
+    <div class="card alert-card">
+      <h2>⚠ Gastos fijos pendientes — ${escapeHtml(monthLabel(realMonth))}</h2>
+      <p class="alert-text">Tienes ${pendingFixed.length} gasto(s) fijo(s) sin confirmar este mes.</p>
+      <button class="btn" data-action="goto-fijos">Ir a Gastos fijos</button>
+    </div>` : "";
+
+  const semaforoEmoji = totals.semaforo === "green" ? "🟢" : totals.semaforo === "yellow" ? "🟡" : "🔴";
+
   return `
+    ${pendingBanner}
+
     <div class="card">
       <div class="month-nav">
         <button data-action="dash-prev">‹</button>
@@ -163,6 +244,17 @@ function renderDashboard() {
         <div class="label">Saldo del mes</div>
         <div class="value" style="color:${totals.saldo >= 0 ? "var(--green)" : "var(--red)"}">${fmtMoney(totals.saldo)}</div>
         <div class="sub">${daysLeft !== null ? `${daysLeft} día(s) restantes · ${perDay !== null ? fmtMoney(perDay) : "-"} / día disponible` : "Mes ya cerrado o futuro"}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Semáforo de gasto libre</h2>
+      <div class="semaforo-box semaforo-${totals.semaforo}">
+        <span class="semaforo-dot">${semaforoEmoji}</span>
+        <div>
+          <div class="semaforo-amount">${fmtMoney(totals.disponibleLibre)}</div>
+          <div class="semaforo-label">Disponible libre = ingresos − fijos confirmados − deudas − variables</div>
+        </div>
       </div>
     </div>
 
@@ -247,6 +339,13 @@ function renderRegistro() {
           <input type="text" id="f-meta" name="meta" placeholder="Nombre de la meta">
         </div>
 
+        <div class="field" id="recurring-field" style="display:none">
+          <label class="checkbox-label" for="f-recurring">
+            <input type="checkbox" id="f-recurring">
+            ¿Es un gasto fijo/recurrente?
+          </label>
+        </div>
+
         <div class="field">
           <label for="f-date">Fecha</label>
           <input type="date" id="f-date" name="date" value="${todayISO()}" required>
@@ -260,6 +359,179 @@ function renderRegistro() {
         <button type="submit" class="btn">Guardar</button>
       </form>
     </div>
+  `;
+}
+
+// ---------- Gastos fijos ----------
+
+function renderFijos() {
+  const mKey = currentRealMonth();
+  const pending = pendingFixedExpenses(mKey);
+  const confirmedTx = state.transactions.filter(t => t.source === "fijo" && monthKey(t.date) === mKey);
+
+  const pendingRows = pending.length ? pending.map(fe => `
+    <div class="list-row">
+      <div class="info">
+        <div class="title">${escapeHtml(fe.name || fe.category)}</div>
+        <div class="meta">${escapeHtml(fe.category)} · configurado: ${fmtMoney(fe.amount)}</div>
+      </div>
+      <input type="number" step="0.01" min="0" class="pending-amount-input" data-id="${fe.id}" value="${fe.amount}">
+      <button class="btn small" data-action="confirm-fixed" data-id="${fe.id}">Confirmar</button>
+    </div>`).join("") : `<div class="empty-state">No hay fijos pendientes este mes. 🎉</div>`;
+
+  const confirmedRows = confirmedTx.length ? confirmedTx.map(t => `
+    <div class="list-row">
+      <div class="info">
+        <div class="title">${escapeHtml(t.category)}</div>
+        <div class="meta">${t.date}${t.note ? " · " + escapeHtml(t.note) : ""}</div>
+      </div>
+      <div class="amount-tag gasto">-${fmtMoney(t.amount)}</div>
+    </div>`).join("") : `<div class="empty-state">Aún no confirmas ningún fijo este mes.</div>`;
+
+  const configuredRows = state.fixedExpenses.length ? state.fixedExpenses.map(fe => `
+    <div class="list-row">
+      <div class="info">
+        <div class="title">${escapeHtml(fe.name || fe.category)}</div>
+        <div class="meta">${escapeHtml(fe.category)}</div>
+      </div>
+      <div class="amount-tag gasto">${fmtMoney(fe.amount)}</div>
+      <button class="btn secondary small" data-action="delete-fixed" data-id="${fe.id}">Eliminar</button>
+    </div>`).join("") : `<div class="empty-state">No has configurado gastos fijos todavía.</div>`;
+
+  const categoryOptions = CATEGORIES.gasto["Fijos"].map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")
+    + `<option value="${CUSTOM_CATEGORY}">Otro</option>`;
+
+  return `
+    <div class="card">
+      <h2>Pendientes de confirmar — ${escapeHtml(monthLabel(mKey))}</h2>
+      ${pending.length ? `<button class="btn" data-action="confirm-all-fixed" style="margin-bottom:12px;">Confirmar todos</button>` : ""}
+      ${pendingRows}
+    </div>
+
+    <div class="card">
+      <h2>Confirmados este mes</h2>
+      ${confirmedRows}
+    </div>
+
+    <div class="card">
+      <h2>Nuevo gasto fijo</h2>
+      <form id="fixed-form" class="inline-form">
+        <div class="field">
+          <label>Nombre</label>
+          <input type="text" name="name" placeholder="ej. Arriendo depto" required>
+        </div>
+        <div class="field">
+          <label>Categoría</label>
+          <select id="fixed-category-select" name="category" required>${categoryOptions}</select>
+        </div>
+        <div class="field" id="fixed-custom-field" style="display:none">
+          <label>Nombre de la categoría personalizada</label>
+          <input type="text" id="fixed-custom-category" placeholder="ej. Gimnasio">
+        </div>
+        <div class="field">
+          <label>Monto</label>
+          <input type="number" step="0.01" min="0" name="amount" placeholder="0.00" required>
+        </div>
+        <button type="submit" class="btn" style="grid-column: 1 / -1;">Agregar fijo</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Fijos configurados</h2>
+      ${configuredRows}
+    </div>
+  `;
+}
+
+// ---------- Comparador histórico ----------
+
+function getCategoryTotalsForMonth(mKey, type) {
+  const totals = {};
+  state.transactions.filter(t => t.type === type && monthKey(t.date) === mKey).forEach(t => {
+    totals[t.category] = (totals[t.category] || 0) + t.amount;
+  });
+  return totals;
+}
+
+function computeComparison(type, rangeN) {
+  const curKey = currentRealMonth();
+  const pastKeys = [];
+  for (let i = 1; i <= rangeN; i++) pastKeys.push(shiftMonth(curKey, -i));
+
+  const availableKeys = pastKeys.filter(k => state.transactions.some(t => t.type === type && monthKey(t.date) === k));
+  const currentTotals = getCategoryTotalsForMonth(curKey, type);
+
+  if (availableKeys.length === 0) {
+    return { insufficient: true, currentTotals, rangeN };
+  }
+
+  const sumTotals = {};
+  availableKeys.forEach(k => {
+    const t = getCategoryTotalsForMonth(k, type);
+    Object.entries(t).forEach(([cat, amt]) => { sumTotals[cat] = (sumTotals[cat] || 0) + amt; });
+  });
+  const avgTotals = {};
+  Object.entries(sumTotals).forEach(([cat, amt]) => { avgTotals[cat] = amt / availableKeys.length; });
+
+  return { insufficient: false, currentTotals, avgTotals, availableCount: availableKeys.length, rangeN };
+}
+
+function renderComparisonChart(result, title) {
+  if (result.insufficient) {
+    return `<div class="card"><h2>${escapeHtml(title)}</h2><div class="empty-state">Aún no hay suficiente historial para comparar con los últimos ${result.rangeN} mes(es).</div></div>`;
+  }
+  const { currentTotals, avgTotals, availableCount, rangeN } = result;
+  const categories = Array.from(new Set([...Object.keys(currentTotals), ...Object.keys(avgTotals)]))
+    .sort((a, b) => (Math.max(currentTotals[b] || 0, avgTotals[b] || 0)) - (Math.max(currentTotals[a] || 0, avgTotals[a] || 0)));
+  const maxVal = Math.max(1, ...categories.map(c => Math.max(currentTotals[c] || 0, avgTotals[c] || 0)));
+
+  const note = availableCount < rangeN
+    ? `<div class="meta" style="margin-bottom:10px;">Promedio calculado con ${availableCount} de ${rangeN} mes(es) con datos.</div>`
+    : "";
+
+  const rows = categories.length ? categories.map(cat => {
+    const cur = currentTotals[cat] || 0;
+    const avg = avgTotals[cat] || 0;
+    return `
+      <div class="cmp-row">
+        <div class="cmp-label">${escapeHtml(cat)}</div>
+        <div class="cmp-bars">
+          <div class="cmp-bar-line">
+            <span class="cmp-tag current">Este mes</span>
+            <div class="bar-track"><div class="bar-fill current" style="width:${(cur / maxVal) * 100}%"></div></div>
+            <span class="cmp-value">${fmtMoney(cur)}</span>
+          </div>
+          <div class="cmp-bar-line">
+            <span class="cmp-tag avg">Promedio</span>
+            <div class="bar-track"><div class="bar-fill avg" style="width:${(avg / maxVal) * 100}%"></div></div>
+            <span class="cmp-value">${fmtMoney(avg)}</span>
+          </div>
+        </div>
+      </div>`;
+  }).join("") : `<div class="empty-state">Sin datos para mostrar.</div>`;
+
+  return `<div class="card"><h2>${escapeHtml(title)}</h2>${note}${rows}</div>`;
+}
+
+function renderComparar() {
+  const rangeOptions = Array.from({ length: 12 }, (_, i) => i + 1)
+    .map(n => `<option value="${n}" ${n === cmpRange ? "selected" : ""}>${n} mes${n > 1 ? "es" : ""}</option>`).join("");
+
+  const gastoResult = computeComparison("gasto", cmpRange);
+  const ingresoResult = computeComparison("ingreso", cmpRange);
+
+  return `
+    <div class="card">
+      <h2>Comparador histórico</h2>
+      <div class="filter-row">
+        <label style="display:flex;align-items:center;gap:8px;font-size:14px;">
+          Comparar mes actual vs. promedio de los últimos
+          <select id="cmp-range-select">${rangeOptions}</select>
+        </label>
+      </div>
+    </div>
+    ${renderComparisonChart(gastoResult, "Gastos por categoría — mes actual vs. promedio")}
+    ${renderComparisonChart(ingresoResult, "Ingresos por categoría — mes actual vs. promedio")}
   `;
 }
 
@@ -437,6 +709,13 @@ function attachHandlers() {
       dashboardMonth = shiftMonth(dashboardMonth, 1);
       render();
     });
+    const gotoFijosBtn = document.querySelector('[data-action="goto-fijos"]');
+    if (gotoFijosBtn) {
+      gotoFijosBtn.addEventListener("click", () => {
+        activeTab = "fijos";
+        render();
+      });
+    }
   }
 
   if (activeTab === "registro") {
@@ -449,11 +728,16 @@ function attachHandlers() {
 
     const catSelect = document.getElementById("f-category");
     const metaField = document.getElementById("meta-field");
+    const recurringField = document.getElementById("recurring-field");
     function toggleMeta() {
       metaField.style.display = catSelect.value === "Ahorro/inversión" ? "flex" : "none";
     }
-    catSelect.addEventListener("change", toggleMeta);
+    function toggleRecurring() {
+      recurringField.style.display = categoryGroup(catSelect.value) === "Fijos" ? "flex" : "none";
+    }
+    catSelect.addEventListener("change", () => { toggleMeta(); toggleRecurring(); });
     toggleMeta();
+    toggleRecurring();
 
     document.getElementById("entry-form").addEventListener("submit", (e) => {
       e.preventDefault();
@@ -466,19 +750,101 @@ function attachHandlers() {
       if (category === "Ahorro/inversión" && meta) {
         note = note ? `${note} [Meta: ${meta}]` : `Meta: ${meta}`;
       }
-      state.transactions.push({
+
+      const recurringEl = document.getElementById("f-recurring");
+      const isRecurring = entryType === "gasto" && recurringEl && recurringEl.checked;
+      const tx = {
         id: uid(),
         type: entryType,
         category,
         amount,
         date: fd.get("date") || todayISO(),
         note
-      });
+      };
+
+      if (isRecurring) {
+        const feName = note || category;
+        let fe = state.fixedExpenses.find(f => f.category === category && f.name === feName);
+        if (fe) {
+          fe.amount = amount;
+        } else {
+          fe = { id: uid(), name: feName, category, amount };
+          state.fixedExpenses.push(fe);
+        }
+        tx.fixedExpenseId = fe.id;
+        tx.source = "fijo";
+      }
+
+      state.transactions.push(tx);
       saveState();
-      toast("Movimiento guardado");
+      toast(isRecurring ? "Movimiento guardado y agregado a Gastos fijos" : "Movimiento guardado");
       e.target.reset();
       document.getElementById("f-date").value = todayISO();
       toggleMeta();
+      toggleRecurring();
+    });
+  }
+
+  if (activeTab === "fijos") {
+    const fixedCatSelect = document.getElementById("fixed-category-select");
+    const fixedCustomField = document.getElementById("fixed-custom-field");
+    function toggleFixedCustom() {
+      fixedCustomField.style.display = fixedCatSelect.value === CUSTOM_CATEGORY ? "flex" : "none";
+    }
+    fixedCatSelect.addEventListener("change", toggleFixedCustom);
+    toggleFixedCustom();
+
+    document.getElementById("fixed-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const amount = parseFloat(fd.get("amount"));
+      const name = fd.get("name").trim();
+      let category = fd.get("category");
+      if (category === CUSTOM_CATEGORY) {
+        category = document.getElementById("fixed-custom-category").value.trim();
+        if (!category) { toast("Escribe el nombre de la categoría personalizada"); return; }
+      }
+      if (!amount || amount <= 0 || !name) { toast("Completa nombre y monto"); return; }
+      state.fixedExpenses.push({ id: uid(), name, category, amount });
+      saveState();
+      render();
+      toast("Gasto fijo agregado");
+    });
+
+    document.querySelectorAll('[data-action="confirm-fixed"]').forEach(btn => {
+      btn.addEventListener("click", () => {
+        const input = document.querySelector(`.pending-amount-input[data-id="${btn.dataset.id}"]`);
+        confirmFixedExpense(btn.dataset.id, input ? input.value : undefined);
+        render();
+        toast("Gasto fijo confirmado");
+      });
+    });
+
+    const confirmAllBtn = document.querySelector('[data-action="confirm-all-fixed"]');
+    if (confirmAllBtn) {
+      confirmAllBtn.addEventListener("click", () => {
+        document.querySelectorAll(".pending-amount-input").forEach(input => {
+          confirmFixedExpense(input.dataset.id, input.value);
+        });
+        render();
+        toast("Fijos confirmados");
+      });
+    }
+
+    document.querySelectorAll('[data-action="delete-fixed"]').forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.fixedExpenses = state.fixedExpenses.filter(fe => fe.id !== btn.dataset.id);
+        saveState();
+        render();
+        toast("Gasto fijo eliminado");
+      });
+    });
+  }
+
+  if (activeTab === "comparar") {
+    document.getElementById("cmp-range-select").addEventListener("change", (e) => {
+      cmpRange = parseInt(e.target.value, 10);
+      render();
     });
   }
 
@@ -601,6 +967,55 @@ document.getElementById("tabs").addEventListener("click", (e) => {
   if (!btn) return;
   activeTab = btn.dataset.tab;
   render();
+});
+
+// ---------- Exportar / Importar ----------
+
+function exportData() {
+  const dataStr = JSON.stringify(state, null, 2);
+  const blob = new Blob([dataStr], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `finanzas-backup-${todayISO()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast("Datos exportados");
+}
+
+function importDataFromFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(reader.result);
+    } catch (e) {
+      toast("Archivo inválido: no es un JSON válido");
+      return;
+    }
+    const ok = confirm("Esto reemplazará todos los datos actuales por los del archivo importado. ¿Continuar?");
+    if (!ok) return;
+    state = migrateState(parsed);
+    saveState();
+    render();
+    toast("Datos importados correctamente");
+  };
+  reader.onerror = () => toast("No se pudo leer el archivo");
+  reader.readAsText(file);
+}
+
+document.getElementById("export-btn").addEventListener("click", exportData);
+
+document.getElementById("import-btn").addEventListener("click", () => {
+  document.getElementById("import-file-input").click();
+});
+
+document.getElementById("import-file-input").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (file) importDataFromFile(file);
+  e.target.value = "";
 });
 
 // ---------- Init ----------

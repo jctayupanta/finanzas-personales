@@ -56,8 +56,22 @@ body {
 }
 
 .topbar h1 {
-  margin: 0 0 12px;
+  margin: 0;
   font-size: 20px;
+}
+
+.topbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.backup-bar {
+  display: flex;
+  gap: 8px;
 }
 
 .tabs {
@@ -255,6 +269,23 @@ form.entry-form {
 .field textarea:focus {
   outline: 2px solid var(--blue);
   outline-offset: -1px;
+}
+
+.checkbox-label {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--blue);
 }
 
 .type-toggle {
@@ -468,3 +499,95 @@ form.entry-form {
 }
 
 .overdue { color: var(--red); font-weight: 600; }
+
+.alert-card {
+  border-color: var(--amber);
+  background: var(--amber-bg);
+}
+
+.alert-card h2 {
+  color: var(--amber);
+}
+
+.alert-text {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.semaforo-box {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border-radius: var(--radius);
+}
+
+.semaforo-box.semaforo-green { background: var(--green-bg); }
+.semaforo-box.semaforo-yellow { background: var(--amber-bg); }
+.semaforo-box.semaforo-red { background: var(--red-bg); }
+
+.semaforo-dot { font-size: 28px; line-height: 1; }
+
+.semaforo-amount { font-size: 22px; font-weight: 800; }
+
+.semaforo-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.pending-amount-input {
+  width: 100px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.cmp-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cmp-row:last-child { border-bottom: none; }
+
+.cmp-label {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.cmp-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cmp-bar-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cmp-tag {
+  font-size: 11px;
+  color: var(--text-muted);
+  width: 62px;
+  flex-shrink: 0;
+}
+
+.cmp-bar-line .bar-track { flex: 1; }
+
+.bar-fill.current { background: var(--blue); }
+.bar-fill.avg { background: var(--text-muted); }
+
+.cmp-value {
+  font-size: 12px;
+  font-weight: 600;
+  width: 80px;
+  text-align: right;
+  flex-shrink: 0;
+}
