@@ -18,13 +18,16 @@ function uid() {
 
 // Normalizes any previously-saved (or imported) state shape into the current
 // shape, backfilling missing fields instead of discarding unknown data.
+// fixedExpenses items predating the ingreso/gasto split lack a `type` field;
+// those are treated as "gasto" (their only possible meaning at the time).
 function migrateState(raw) {
   const s = raw && typeof raw === "object" ? raw : {};
+  const fixedExpenses = Array.isArray(s.fixedExpenses) ? s.fixedExpenses : [];
   return {
     transactions: Array.isArray(s.transactions) ? s.transactions : [],
     debts: Array.isArray(s.debts) ? s.debts : [],
     receivables: Array.isArray(s.receivables) ? s.receivables : [],
-    fixedExpenses: Array.isArray(s.fixedExpenses) ? s.fixedExpenses : []
+    fixedExpenses: fixedExpenses.map(fe => ({ type: "gasto", ...fe }))
   };
 }
 
@@ -109,14 +112,16 @@ function categoryGroup(cat) {
   return null;
 }
 
-// ---------- Gastos fijos ----------
+// ---------- Fijos (gastos e ingresos recurrentes) ----------
+// A single fixedExpenses list backs both "Gastos fijos" and "Ingresos fijos";
+// each item's `type` ("gasto" | "ingreso") decides which section it belongs to.
 
 function isFixedConfirmed(fixedExpenseId, mKey) {
   return state.transactions.some(t => t.fixedExpenseId === fixedExpenseId && monthKey(t.date) === mKey);
 }
 
-function pendingFixedExpenses(mKey) {
-  return state.fixedExpenses.filter(fe => !isFixedConfirmed(fe.id, mKey));
+function pendingFixedExpenses(mKey, type) {
+  return state.fixedExpenses.filter(fe => fe.type === type && !isFixedConfirmed(fe.id, mKey));
 }
 
 function confirmFixedExpense(fixedExpenseId, amount) {
@@ -125,7 +130,7 @@ function confirmFixedExpense(fixedExpenseId, amount) {
   const amt = Number(amount) > 0 ? Number(amount) : fe.amount;
   state.transactions.push({
     id: uid(),
-    type: "gasto",
+    type: fe.type,
     category: fe.category,
     amount: amt,
     date: todayISO(),
@@ -156,7 +161,8 @@ function render() {
 
   if (activeTab === "dashboard") app.innerHTML = renderDashboard();
   else if (activeTab === "registro") app.innerHTML = renderRegistro();
-  else if (activeTab === "fijos") app.innerHTML = renderFijos();
+  else if (activeTab === "fijos") app.innerHTML = renderFijosSection("gasto");
+  else if (activeTab === "fijos-ingreso") app.innerHTML = renderFijosSection("ingreso");
   else if (activeTab === "movimientos") app.innerHTML = renderMovimientos();
   else if (activeTab === "deudas") app.innerHTML = renderDeudas();
   else if (activeTab === "cobrar") app.innerHTML = renderCobrar();
@@ -200,6 +206,21 @@ function computeMonthTotals(key) {
   };
 }
 
+function renderPendingFixedBanner(type, mKey) {
+  const pending = pendingFixedExpenses(mKey, type);
+  if (!pending.length) return "";
+  const isGasto = type === "gasto";
+  const sectionLabel = isGasto ? "Gastos fijos" : "Ingresos fijos";
+  const itemLabel = isGasto ? "gasto(s) fijo(s)" : "ingreso(s) fijo(s)";
+  const tabTarget = isGasto ? "fijos" : "fijos-ingreso";
+  return `
+    <div class="card alert-card">
+      <h2>⚠ ${escapeHtml(sectionLabel)} pendientes — ${escapeHtml(monthLabel(mKey))}</h2>
+      <p class="alert-text">Tienes ${pending.length} ${itemLabel} sin confirmar este mes.</p>
+      <button class="btn" data-action="goto-fijos" data-target="${tabTarget}">Ir a ${escapeHtml(sectionLabel)}</button>
+    </div>`;
+}
+
 function renderDashboard() {
   const totals = computeMonthTotals(dashboardMonth);
   const daysLeft = daysRemainingInMonth(dashboardMonth);
@@ -221,13 +242,7 @@ function renderDashboard() {
   const pendingReceivables = state.receivables.filter(r => !r.paid);
 
   const realMonth = currentRealMonth();
-  const pendingFixed = pendingFixedExpenses(realMonth);
-  const pendingBanner = pendingFixed.length ? `
-    <div class="card alert-card">
-      <h2>⚠ Gastos fijos pendientes — ${escapeHtml(monthLabel(realMonth))}</h2>
-      <p class="alert-text">Tienes ${pendingFixed.length} gasto(s) fijo(s) sin confirmar este mes.</p>
-      <button class="btn" data-action="goto-fijos">Ir a Gastos fijos</button>
-    </div>` : "";
+  const pendingBanner = renderPendingFixedBanner("gasto", realMonth) + renderPendingFixedBanner("ingreso", realMonth);
 
   const semaforoEmoji = totals.semaforo === "green" ? "🟢" : totals.semaforo === "yellow" ? "🟡" : "🔴";
 
@@ -342,7 +357,7 @@ function renderRegistro() {
         <div class="field" id="recurring-field" style="display:none">
           <label class="checkbox-label" for="f-recurring">
             <input type="checkbox" id="f-recurring">
-            ¿Es un gasto fijo/recurrente?
+            ¿Es un ${isGasto ? "gasto" : "ingreso"} fijo/recurrente?
           </label>
         </div>
 
@@ -362,12 +377,20 @@ function renderRegistro() {
   `;
 }
 
-// ---------- Gastos fijos ----------
+// ---------- Fijos (gastos e ingresos recurrentes) ----------
 
-function renderFijos() {
+function renderFijosSection(type) {
+  const isGasto = type === "gasto";
+  const sectionLabel = isGasto ? "Gastos fijos" : "Ingresos fijos";
+  const itemNoun = isGasto ? "gasto fijo" : "ingreso fijo";
+  const itemNounPlural = isGasto ? "gastos fijos" : "ingresos fijos";
+  const sign = isGasto ? "-" : "+";
+  const amountClass = isGasto ? "gasto" : "ingreso";
+
   const mKey = currentRealMonth();
-  const pending = pendingFixedExpenses(mKey);
-  const confirmedTx = state.transactions.filter(t => t.source === "fijo" && monthKey(t.date) === mKey);
+  const pending = pendingFixedExpenses(mKey, type);
+  const confirmedTx = state.transactions.filter(t => t.source === "fijo" && t.type === type && monthKey(t.date) === mKey);
+  const configuredItems = state.fixedExpenses.filter(fe => fe.type === type);
 
   const pendingRows = pending.length ? pending.map(fe => `
     <div class="list-row">
@@ -377,7 +400,7 @@ function renderFijos() {
       </div>
       <input type="number" step="0.01" min="0" class="pending-amount-input" data-id="${fe.id}" value="${fe.amount}">
       <button class="btn small" data-action="confirm-fixed" data-id="${fe.id}">Confirmar</button>
-    </div>`).join("") : `<div class="empty-state">No hay fijos pendientes este mes. 🎉</div>`;
+    </div>`).join("") : `<div class="empty-state">No hay ${itemNounPlural} pendientes este mes. 🎉</div>`;
 
   const confirmedRows = confirmedTx.length ? confirmedTx.map(t => `
     <div class="list-row">
@@ -385,26 +408,27 @@ function renderFijos() {
         <div class="title">${escapeHtml(t.category)}</div>
         <div class="meta">${t.date}${t.note ? " · " + escapeHtml(t.note) : ""}</div>
       </div>
-      <div class="amount-tag gasto">-${fmtMoney(t.amount)}</div>
-    </div>`).join("") : `<div class="empty-state">Aún no confirmas ningún fijo este mes.</div>`;
+      <div class="amount-tag ${amountClass}">${sign}${fmtMoney(t.amount)}</div>
+    </div>`).join("") : `<div class="empty-state">Aún no confirmas ningún ${itemNoun} este mes.</div>`;
 
-  const configuredRows = state.fixedExpenses.length ? state.fixedExpenses.map(fe => `
+  const configuredRows = configuredItems.length ? configuredItems.map(fe => `
     <div class="list-row">
       <div class="info">
         <div class="title">${escapeHtml(fe.name || fe.category)}</div>
         <div class="meta">${escapeHtml(fe.category)}</div>
       </div>
-      <div class="amount-tag gasto">${fmtMoney(fe.amount)}</div>
+      <div class="amount-tag ${amountClass}">${fmtMoney(fe.amount)}</div>
       <button class="btn secondary small" data-action="delete-fixed" data-id="${fe.id}">Eliminar</button>
-    </div>`).join("") : `<div class="empty-state">No has configurado gastos fijos todavía.</div>`;
+    </div>`).join("") : `<div class="empty-state">No has configurado ${itemNounPlural} todavía.</div>`;
 
-  const categoryOptions = CATEGORIES.gasto["Fijos"].map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")
+  const baseCategories = isGasto ? CATEGORIES.gasto["Fijos"] : CATEGORIES.ingreso;
+  const categoryOptions = baseCategories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")
     + `<option value="${CUSTOM_CATEGORY}">Otro</option>`;
 
   return `
     <div class="card">
       <h2>Pendientes de confirmar — ${escapeHtml(monthLabel(mKey))}</h2>
-      ${pending.length ? `<button class="btn" data-action="confirm-all-fixed" style="margin-bottom:12px;">Confirmar todos</button>` : ""}
+      ${pending.length ? `<button class="btn" data-action="confirm-all-fixed" data-type="${type}" style="margin-bottom:12px;">Confirmar todos</button>` : ""}
       ${pendingRows}
     </div>
 
@@ -414,11 +438,11 @@ function renderFijos() {
     </div>
 
     <div class="card">
-      <h2>Nuevo gasto fijo</h2>
-      <form id="fixed-form" class="inline-form">
+      <h2>Nuevo ${itemNoun}</h2>
+      <form id="fixed-form" class="inline-form" data-type="${type}">
         <div class="field">
           <label>Nombre</label>
-          <input type="text" name="name" placeholder="ej. Arriendo depto" required>
+          <input type="text" name="name" placeholder="ej. ${isGasto ? "Arriendo depto" : "Sueldo Bonum"}" required>
         </div>
         <div class="field">
           <label>Categoría</label>
@@ -426,18 +450,18 @@ function renderFijos() {
         </div>
         <div class="field" id="fixed-custom-field" style="display:none">
           <label>Nombre de la categoría personalizada</label>
-          <input type="text" id="fixed-custom-category" placeholder="ej. Gimnasio">
+          <input type="text" id="fixed-custom-category" placeholder="ej. ${isGasto ? "Gimnasio" : "Renta departamento"}">
         </div>
         <div class="field">
           <label>Monto</label>
           <input type="number" step="0.01" min="0" name="amount" placeholder="0.00" required>
         </div>
-        <button type="submit" class="btn" style="grid-column: 1 / -1;">Agregar fijo</button>
+        <button type="submit" class="btn" style="grid-column: 1 / -1;">Agregar ${itemNoun}</button>
       </form>
     </div>
 
     <div class="card">
-      <h2>Fijos configurados</h2>
+      <h2>${escapeHtml(sectionLabel)} configurados</h2>
       ${configuredRows}
     </div>
   `;
@@ -709,13 +733,12 @@ function attachHandlers() {
       dashboardMonth = shiftMonth(dashboardMonth, 1);
       render();
     });
-    const gotoFijosBtn = document.querySelector('[data-action="goto-fijos"]');
-    if (gotoFijosBtn) {
-      gotoFijosBtn.addEventListener("click", () => {
-        activeTab = "fijos";
+    document.querySelectorAll('[data-action="goto-fijos"]').forEach(btn => {
+      btn.addEventListener("click", () => {
+        activeTab = btn.dataset.target;
         render();
       });
-    }
+    });
   }
 
   if (activeTab === "registro") {
@@ -733,7 +756,8 @@ function attachHandlers() {
       metaField.style.display = catSelect.value === "Ahorro/inversión" ? "flex" : "none";
     }
     function toggleRecurring() {
-      recurringField.style.display = categoryGroup(catSelect.value) === "Fijos" ? "flex" : "none";
+      const show = entryType === "ingreso" || categoryGroup(catSelect.value) === "Fijos";
+      recurringField.style.display = show ? "flex" : "none";
     }
     catSelect.addEventListener("change", () => { toggleMeta(); toggleRecurring(); });
     toggleMeta();
@@ -752,7 +776,7 @@ function attachHandlers() {
       }
 
       const recurringEl = document.getElementById("f-recurring");
-      const isRecurring = entryType === "gasto" && recurringEl && recurringEl.checked;
+      const isRecurring = recurringEl && recurringEl.checked && recurringField.style.display !== "none";
       const tx = {
         id: uid(),
         type: entryType,
@@ -764,11 +788,11 @@ function attachHandlers() {
 
       if (isRecurring) {
         const feName = note || category;
-        let fe = state.fixedExpenses.find(f => f.category === category && f.name === feName);
+        let fe = state.fixedExpenses.find(f => f.type === entryType && f.category === category && f.name === feName);
         if (fe) {
           fe.amount = amount;
         } else {
-          fe = { id: uid(), name: feName, category, amount };
+          fe = { id: uid(), type: entryType, name: feName, category, amount };
           state.fixedExpenses.push(fe);
         }
         tx.fixedExpenseId = fe.id;
@@ -777,7 +801,8 @@ function attachHandlers() {
 
       state.transactions.push(tx);
       saveState();
-      toast(isRecurring ? "Movimiento guardado y agregado a Gastos fijos" : "Movimiento guardado");
+      const sectionLabel = entryType === "gasto" ? "Gastos fijos" : "Ingresos fijos";
+      toast(isRecurring ? `Movimiento guardado y agregado a ${sectionLabel}` : "Movimiento guardado");
       e.target.reset();
       document.getElementById("f-date").value = todayISO();
       toggleMeta();
@@ -785,7 +810,10 @@ function attachHandlers() {
     });
   }
 
-  if (activeTab === "fijos") {
+  if (activeTab === "fijos" || activeTab === "fijos-ingreso") {
+    const type = activeTab === "fijos" ? "gasto" : "ingreso";
+    const itemLabel = type === "gasto" ? "Gasto fijo" : "Ingreso fijo";
+
     const fixedCatSelect = document.getElementById("fixed-category-select");
     const fixedCustomField = document.getElementById("fixed-custom-field");
     function toggleFixedCustom() {
@@ -805,10 +833,10 @@ function attachHandlers() {
         if (!category) { toast("Escribe el nombre de la categoría personalizada"); return; }
       }
       if (!amount || amount <= 0 || !name) { toast("Completa nombre y monto"); return; }
-      state.fixedExpenses.push({ id: uid(), name, category, amount });
+      state.fixedExpenses.push({ id: uid(), type, name, category, amount });
       saveState();
       render();
-      toast("Gasto fijo agregado");
+      toast(`${itemLabel} agregado`);
     });
 
     document.querySelectorAll('[data-action="confirm-fixed"]').forEach(btn => {
@@ -816,7 +844,7 @@ function attachHandlers() {
         const input = document.querySelector(`.pending-amount-input[data-id="${btn.dataset.id}"]`);
         confirmFixedExpense(btn.dataset.id, input ? input.value : undefined);
         render();
-        toast("Gasto fijo confirmado");
+        toast(`${itemLabel} confirmado`);
       });
     });
 
@@ -827,7 +855,7 @@ function attachHandlers() {
           confirmFixedExpense(input.dataset.id, input.value);
         });
         render();
-        toast("Fijos confirmados");
+        toast(`${type === "gasto" ? "Gastos" : "Ingresos"} fijos confirmados`);
       });
     }
 
@@ -836,7 +864,7 @@ function attachHandlers() {
         state.fixedExpenses = state.fixedExpenses.filter(fe => fe.id !== btn.dataset.id);
         saveState();
         render();
-        toast("Gasto fijo eliminado");
+        toast(`${itemLabel} eliminado`);
       });
     });
   }
