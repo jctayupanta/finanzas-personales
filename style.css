@@ -39,6 +39,11 @@
 
 * { box-sizing: border-box; }
 
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -255,6 +260,8 @@ form.entry-form {
 .field input,
 .field select,
 .field textarea {
+  width: 100%;
+  min-width: 0;
   padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -354,6 +361,7 @@ form.entry-form {
 .list-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 12px 0;
   border-bottom: 1px solid var(--border);
@@ -443,6 +451,18 @@ form.entry-form {
 .debt-card .actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.withdraw-input {
+  min-width: 0;
+  flex: 1 1 100px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
 }
 
 .inline-form {
@@ -454,6 +474,10 @@ form.entry-form {
 
 @media (max-width: 640px) {
   .inline-form { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 480px) {
+  .inline-form { grid-template-columns: 1fr; }
 }
 
 .section-title {
@@ -613,10 +637,13 @@ form.entry-form {
   justify-content: space-between;
   gap: 10px;
   padding: 6px 0;
+  flex-wrap: wrap;
 }
 
 .assign-row-label {
   font-size: 14px;
+  flex: 1 1 140px;
+  min-width: 0;
 }
 
 .assign-row-label .meta {
@@ -626,6 +653,8 @@ form.entry-form {
 
 .assign-row input {
   width: 110px;
+  min-width: 0;
+  flex-shrink: 0;
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -681,6 +710,8 @@ form.entry-form {
 
 .pending-amount-input {
   width: 100px;
+  min-width: 0;
+  flex-shrink: 0;
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
