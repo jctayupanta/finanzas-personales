@@ -243,6 +243,7 @@ function render() {
   else if (activeTab === "cobrar") app.innerHTML = renderCobrar();
   else if (activeTab === "esperados") app.innerHTML = renderIngresosEsperados();
   else if (activeTab === "comparar") app.innerHTML = renderComparar();
+  else if (activeTab === "mapa") app.innerHTML = renderMapaGastos();
 
   attachHandlers();
 }
@@ -751,6 +752,90 @@ function renderComparar() {
     </div>
     ${renderComparisonChart(gastoResult, "Gastos por categoría — mes actual vs. promedio")}
     ${renderComparisonChart(ingresoResult, "Ingresos por categoría — mes actual vs. promedio")}
+  `;
+}
+
+// ---------- Mapa de gastos ----------
+
+// Evenly-spaced hues (golden angle) so the palette scales to any number of
+// slices without needing a fixed color list per category/debt.
+function paletteColor(i) {
+  return `hsl(${Math.round((i * 137.508) % 360)}, 60%, 55%)`;
+}
+
+function buildConicGradient(segments) {
+  const total = segments.reduce((s, seg) => s + seg.value, 0);
+  if (total <= 0) return null;
+  let acc = 0;
+  const stops = segments.map(seg => {
+    const start = (acc / total) * 100;
+    acc += seg.value;
+    const end = (acc / total) * 100;
+    return `${seg.color} ${start}% ${end}%`;
+  });
+  return `conic-gradient(${stops.join(", ")})`;
+}
+
+function renderLegend(segments, total) {
+  return segments.map(seg => `
+    <div class="legend-row">
+      <span class="legend-dot" style="background:${seg.color}"></span>
+      <span class="legend-label">${escapeHtml(seg.label)}</span>
+      <span class="legend-pct">${total ? ((seg.value / total) * 100).toFixed(0) : 0}%</span>
+      <span class="legend-value">${fmtMoney(seg.value)}</span>
+    </div>`).join("");
+}
+
+function renderMapaGastos() {
+  const mKey = currentRealMonth();
+  const totals = computeMonthTotals(mKey);
+
+  // ---- Sección 1: solo categorías variables, % sobre el total variable ----
+  const variableEntries = Object.entries(totals.byCategory)
+    .filter(([cat]) => categoryGroup(cat) === "Variables")
+    .sort((a, b) => b[1] - a[1]);
+  const totalVariable = variableEntries.reduce((s, [, amt]) => s + amt, 0);
+  const maxVariable = variableEntries.length ? variableEntries[0][1] : 0;
+
+  const variableRows = variableEntries.length ? variableEntries.map(([cat, amt]) => `
+    <div class="cat-row">
+      <span class="name">${escapeHtml(cat)}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${maxVariable ? (amt / maxVariable * 100) : 0}%"></div></div>
+      <span class="pill">${((amt / totalVariable) * 100).toFixed(0)}%</span>
+      <span class="amount">${fmtMoney(amt)}</span>
+    </div>`).join("")
+    : `<div class="empty-state">No hay gastos variables registrados este mes.</div>`;
+
+  // ---- Sección 2: torta con fijos + variables + deudas (sin ahorro/inversión) ----
+  const fijosEntries = Object.entries(totals.byCategory).filter(([cat]) => categoryGroup(cat) === "Fijos");
+  const debtEntries = state.debts.filter(d => d.remainingMonths > 0).map(d => [d.name, d.monthlyPayment]);
+
+  const pieSegments = [...fijosEntries, ...variableEntries, ...debtEntries]
+    .sort((a, b) => b[1] - a[1])
+    .map(([label, value], i) => ({ label, value, color: paletteColor(i) }));
+  const pieTotal = pieSegments.reduce((s, seg) => s + seg.value, 0);
+  const gradient = buildConicGradient(pieSegments);
+
+  const pieSection = gradient ? `
+    <div class="pie-wrap">
+      <div class="pie-chart" style="background:${gradient}"></div>
+    </div>
+    <div class="legend-total">Total del mes: ${fmtMoney(pieTotal)}</div>
+    ${renderLegend(pieSegments, pieTotal)}
+  ` : `<div class="empty-state">Sin gastos fijos, variables ni cuotas de deuda este mes.</div>`;
+
+  return `
+    <div class="card">
+      <h2>Distribución del gasto — ${escapeHtml(monthLabel(mKey))}</h2>
+      <p class="alert-text">Fijos confirmados + variables + cuotas de deuda comprometidas (no incluye ahorro/inversión).</p>
+      ${pieSection}
+    </div>
+
+    <div class="card">
+      <h2>Mapa de gastos variables — ${escapeHtml(monthLabel(mKey))}</h2>
+      <p class="alert-text">% sobre el total de gasto variable del mes (no sobre ingresos).</p>
+      ${variableRows}
+    </div>
   `;
 }
 
@@ -1587,6 +1672,7 @@ const APP_SHELL_HTML = `
       <button class="tab-btn" data-tab="cobrar">Por cobrar</button>
       <button class="tab-btn" data-tab="esperados">Ingresos esperados</button>
       <button class="tab-btn" data-tab="comparar">Comparar</button>
+      <button class="tab-btn" data-tab="mapa">Mapa de gastos</button>
     </nav>
   </header>
   <main id="app"></main>
