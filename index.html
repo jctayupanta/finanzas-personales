@@ -7,31 +7,21 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="topbar">
-  <div class="topbar-row">
-    <h1>💰 Mis Finanzas</h1>
-    <div class="backup-bar">
-      <button class="btn secondary small" id="export-btn">⬇ Exportar datos</button>
-      <button class="btn secondary small" id="import-btn">⬆ Importar datos</button>
-      <input type="file" id="import-file-input" accept="application/json" hidden>
-    </div>
-  </div>
-  <nav class="tabs" id="tabs">
-    <button class="tab-btn active" data-tab="dashboard">Resumen</button>
-    <button class="tab-btn" data-tab="registro">Registro rápido</button>
-    <button class="tab-btn" data-tab="fijos">Gastos fijos</button>
-    <button class="tab-btn" data-tab="fijos-ingreso">Ingresos fijos</button>
-    <button class="tab-btn" data-tab="movimientos">Movimientos</button>
-    <button class="tab-btn" data-tab="deudas">Deudas</button>
-    <button class="tab-btn" data-tab="cobrar">Por cobrar</button>
-    <button class="tab-btn" data-tab="comparar">Comparar</button>
-  </nav>
-</header>
 
-<main id="app"></main>
+<div id="gate-screen" class="gate-screen">
+  <form id="gate-form" class="gate-box">
+    <div class="gate-emoji">🔒</div>
+    <h1>Mis Finanzas</h1>
+    <p class="gate-sub">Ingresa la contraseña para continuar</p>
+    <input type="password" id="gate-password" placeholder="Contraseña" autocomplete="current-password" autofocus required>
+    <button type="submit" class="btn">Entrar</button>
+    <div id="gate-error" class="gate-error"></div>
+  </form>
+</div>
 
 <div id="toast" class="toast"></div>
 
-<script src="app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>
