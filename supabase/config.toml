@@ -1,0 +1,7 @@
+project_id = "zyjqojchnhlpfakmnqnf"
+
+[functions.telegram-bot]
+# Telegram no manda un JWT de Supabase en el webhook — la verificación real
+# de origen la hace la función misma comparando el header
+# X-Telegram-Bot-Api-Secret-Token contra TELEGRAM_WEBHOOK_SECRET.
+verify_jwt = false
