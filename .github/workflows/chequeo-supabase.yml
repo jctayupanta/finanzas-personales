@@ -10,6 +10,11 @@ on:
     - cron: '0 8 */3 * *'
   # Botón "Run workflow" en la pestaña Actions para probarlo cuando quieras.
   workflow_dispatch:
+  # TEMPORAL: se ejecuta al modificar este mismo archivo, para poder
+  # probarlo sin el botón de la web. Se quita después de la primera prueba.
+  push:
+    paths:
+      - '.github/workflows/chequeo-supabase.yml'
 
 permissions:
   contents: read
