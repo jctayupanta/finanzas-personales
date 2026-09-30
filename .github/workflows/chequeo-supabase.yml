@@ -1,0 +1,66 @@
+name: Chequeo de Supabase cada 3 días
+
+on:
+  # Cada 3 días a las 08:00 UTC (~03:00 en Ecuador). El plan gratis de
+  # Supabase pausa el proyecto tras 7 días sin actividad; esto deja bastante
+  # margen. (El campo "día del mes" de cron reinicia en 1 cada mes, así que
+  # el intervalo real entre corridas nunca supera los 3 días — como mucho
+  # se juntan un poco más seguido justo al cambiar de mes.)
+  schedule:
+    - cron: '0 8 */3 * *'
+  # Botón "Run workflow" en la pestaña Actions para probarlo cuando quieras.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  consultar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Contar filas de la tabla "debts" en Supabase
+        env:
+          # La publishable key de Supabase ya es pública: está commiteada
+          # tal cual en app.js y cualquiera puede verla abriendo la página
+          # (view-source) o el propio repo, que es público. No hace falta
+          # un Secret de GitHub para esto — ponerla aquí no agrega ninguna
+          # exposición nueva. Ver la nota al usuario sobre por qué.
+          SUPABASE_URL: 'https://zyjqojchnhlpfakmnqnf.supabase.co'
+          SUPABASE_KEY: 'sb_publishable_Ifdazi_w6juVTFqfp7R8aQ_j472_aKW'
+          TABLA: 'debts'
+        run: |
+          set -uo pipefail
+
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_KEY:-}" ]; then
+            echo "::error::Faltan SUPABASE_URL o SUPABASE_KEY en el workflow."
+            exit 1
+          fi
+
+          echo "Consultando ${SUPABASE_URL}/rest/v1/${TABLA} (solo cuenta filas, sin traer datos)..."
+
+          # HEAD + Prefer: count=exact => Supabase cuenta las filas y devuelve
+          # el total en el header Content-Range, sin mandar ni un byte de la
+          # tabla. Es la consulta de lectura más liviana posible, y alcanza
+          # para que Supabase registre actividad y no pause el proyecto.
+          http_code=$(curl -sS -D encabezados.txt -o /dev/null -w '%{http_code}' \
+            -X HEAD \
+            --max-time 30 --retry 2 --retry-delay 5 \
+            -H "apikey: ${SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_KEY}" \
+            -H "Prefer: count=exact" \
+            "${SUPABASE_URL}/rest/v1/${TABLA}?select=id") || {
+              echo "::error::No se pudo conectar con Supabase (curl falló)."
+              exit 1
+            }
+
+          rango=$(grep -i '^content-range:' encabezados.txt | tr -d '\r\n' | sed 's/^[^:]*: *//')
+          echo "HTTP ${http_code}"
+          echo "Content-Range: ${rango:-(sin header)}"
+
+          if [ "${http_code}" -ge 200 ] && [ "${http_code}" -lt 300 ]; then
+            total="${rango##*/}"
+            echo "✅ Supabase respondió correctamente. Filas en \"${TABLA}\": ${total:-desconocido}."
+          else
+            echo "::error::La consulta a Supabase falló (HTTP ${http_code})."
+            exit 1
+          fi
