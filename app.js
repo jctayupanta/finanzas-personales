@@ -215,6 +215,7 @@ function confirmFixedExpense(fixedExpenseId, amount) {
 
 let activeTab = "dashboard";
 let dashboardMonth = todayISO().slice(0, 7);
+let mapaMonth = todayISO().slice(0, 7);
 let movMonthFilter = todayISO().slice(0, 7);
 let movTypeFilter = "todos";
 let entryType = "gasto";
@@ -482,6 +483,7 @@ function renderRegistro() {
       `<optgroup label="${escapeHtml(group)}">${cats.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("")}</optgroup>`
     ).join("");
   }
+  categoryOptions += `<option value="${CUSTOM_CATEGORY}">Otro</option>`;
 
   return `
     <div class="card">
@@ -505,6 +507,11 @@ function renderRegistro() {
         <div class="field" id="meta-field" style="display:none">
           <label for="f-meta">Meta de ahorro (ej. importadora)</label>
           <input type="text" id="f-meta" name="meta" placeholder="Nombre de la meta">
+        </div>
+
+        <div class="field" id="custom-category-field" style="display:none">
+          <label for="f-custom-category">Detalle (ej. tienda, farmacia)</label>
+          <input type="text" id="f-custom-category" placeholder="Escribe el detalle">
         </div>
 
         <div class="field" id="recurring-field" style="display:none">
@@ -598,6 +605,8 @@ function renderFijosSection(type) {
       <div class="amount-tag ${amountClass}">${sign}${fmtMoney(t.amount)}</div>
     </div>`).join("") : `<div class="empty-state">Aún no confirmas ningún ${itemNoun} este mes.</div>`;
 
+  const totalConfigured = configuredItems.reduce((s, fe) => s + fe.amount, 0);
+
   const configuredRows = configuredItems.length ? configuredItems.map(fe => `
     <div class="list-row">
       <div class="info">
@@ -658,6 +667,7 @@ function renderFijosSection(type) {
 
     <div class="card">
       <h2>${escapeHtml(sectionLabel)} configurados</h2>
+      ${configuredItems.length ? `<div class="total-line">Total ${itemNounPlural}: <span class="value">${fmtMoney(totalConfigured)}</span></div>` : ""}
       ${configuredRows}
     </div>
   `;
@@ -787,7 +797,7 @@ function renderLegend(segments, total) {
 }
 
 function renderMapaGastos() {
-  const mKey = currentRealMonth();
+  const mKey = mapaMonth;
   const totals = computeMonthTotals(mKey);
 
   // ---- Sección 1: solo categorías variables, % sobre el total variable ----
@@ -826,13 +836,21 @@ function renderMapaGastos() {
 
   return `
     <div class="card">
-      <h2>Distribución del gasto — ${escapeHtml(monthLabel(mKey))}</h2>
+      <div class="month-nav">
+        <button data-action="mapa-prev">‹</button>
+        <span class="month-label">${monthLabel(mKey)}</span>
+        <button data-action="mapa-next">›</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Distribución del gasto</h2>
       <p class="alert-text">Fijos confirmados + variables + cuotas de deuda comprometidas (no incluye ahorro/inversión).</p>
       ${pieSection}
     </div>
 
     <div class="card">
-      <h2>Mapa de gastos variables — ${escapeHtml(monthLabel(mKey))}</h2>
+      <h2>Mapa de gastos variables</h2>
       <p class="alert-text">% sobre el total de gasto variable del mes (no sobre ingresos).</p>
       ${variableRows}
     </div>
@@ -888,6 +906,9 @@ function renderDeudas() {
   const migratingFixed = migratingFixedId ? state.fixedExpenses.find(fe => fe.id === migratingFixedId) : null;
   if (!migratingFixed) migratingFixedId = null;
 
+  const activeDebts = debts.filter(d => d.remainingMonths > 0);
+  const totalActiveDebt = activeDebts.reduce((s, d) => s + Math.max(d.totalAmount, 0), 0);
+
   const cards = debts.length ? debts.map(d => {
     const original = d.originalTotal || d.totalAmount;
     const paidPct = original > 0 ? Math.min(100, ((original - d.totalAmount) / original) * 100) : 100;
@@ -937,6 +958,7 @@ function renderDeudas() {
     </div>
     <div class="card">
       <h2>Deudas</h2>
+      ${activeDebts.length ? `<div class="total-line">Total deudas activas (saldo pendiente): <span class="value">${fmtMoney(totalActiveDebt)}</span></div>` : ""}
       ${cards}
     </div>
   `;
@@ -946,6 +968,7 @@ function renderDeudas() {
 
 function renderMetas() {
   const goals = state.goals.slice().sort((a, b) => (b.savedAmount / (b.targetAmount || 1)) - (a.savedAmount / (a.targetAmount || 1)));
+  const totalSaved = goals.reduce((s, g) => s + g.savedAmount, 0);
 
   const cards = goals.length ? goals.map(g => {
     const pct = g.targetAmount > 0 ? Math.min(100, (g.savedAmount / g.targetAmount) * 100) : 0;
@@ -985,6 +1008,7 @@ function renderMetas() {
     </div>
     <div class="card">
       <h2>Metas</h2>
+      ${goals.length ? `<div class="total-line">Total ahorrado en metas: <span class="value">${fmtMoney(totalSaved)}</span></div>` : ""}
       ${cards}
     </div>
   `;
@@ -995,6 +1019,7 @@ function renderMetas() {
 function renderCobrar() {
   const pending = state.receivables.filter(r => !r.paid).sort((a, b) => (a.estimatedDate || "9999").localeCompare(b.estimatedDate || "9999"));
   const paid = state.receivables.filter(r => r.paid).sort((a, b) => (b.paidDate || "").localeCompare(a.paidDate || ""));
+  const totalPending = pending.reduce((s, r) => s + r.amount, 0);
 
   const today = todayISO();
 
@@ -1042,6 +1067,7 @@ function renderCobrar() {
     </div>
     <div class="card">
       <h2>Pendiente</h2>
+      ${pending.length ? `<div class="total-line">Total por cobrar pendiente: <span class="value">${fmtMoney(totalPending)}</span></div>` : ""}
       ${pendingRows}
     </div>
     <div class="card">
@@ -1058,6 +1084,7 @@ function renderIngresosEsperados() {
     .sort((a, b) => (a.expectedDate || "9999").localeCompare(b.expectedDate || "9999"));
   const received = state.expectedIncomes.filter(ei => ei.received)
     .sort((a, b) => (b.receivedDate || "").localeCompare(a.receivedDate || ""));
+  const totalPending = pending.reduce((s, ei) => s + ei.amount, 0);
 
   const today = todayISO();
 
@@ -1105,6 +1132,7 @@ function renderIngresosEsperados() {
     </div>
     <div class="card">
       <h2>Pendiente</h2>
+      ${pending.length ? `<div class="total-line">Total ingresos esperados pendientes: <span class="value">${fmtMoney(totalPending)}</span></div>` : ""}
       ${pendingRows}
     </div>
     <div class="card">
@@ -1148,6 +1176,7 @@ function attachHandlers() {
     const catSelect = document.getElementById("f-category");
     const metaField = document.getElementById("meta-field");
     const recurringField = document.getElementById("recurring-field");
+    const customCategoryField = document.getElementById("custom-category-field");
     function toggleMeta() {
       metaField.style.display = catSelect.value === "Ahorro/inversión" ? "flex" : "none";
     }
@@ -1155,16 +1184,24 @@ function attachHandlers() {
       const show = entryType === "ingreso" || categoryGroup(catSelect.value) === "Fijos";
       recurringField.style.display = show ? "flex" : "none";
     }
-    catSelect.addEventListener("change", () => { toggleMeta(); toggleRecurring(); });
+    function toggleCustomCategory() {
+      customCategoryField.style.display = catSelect.value === CUSTOM_CATEGORY ? "flex" : "none";
+    }
+    catSelect.addEventListener("change", () => { toggleMeta(); toggleRecurring(); toggleCustomCategory(); });
     toggleMeta();
     toggleRecurring();
+    toggleCustomCategory();
 
     document.getElementById("entry-form").addEventListener("submit", (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
       const amount = parseFloat(fd.get("amount"));
       if (!amount || amount <= 0) { toast("Ingresa un monto válido"); return; }
-      const category = fd.get("category");
+      let category = fd.get("category");
+      if (category === CUSTOM_CATEGORY) {
+        category = document.getElementById("f-custom-category").value.trim();
+        if (!category) { toast("Escribe el detalle de la categoría"); return; }
+      }
       let note = (fd.get("note") || "").trim();
       const meta = (fd.get("meta") || "").trim();
       if (category === "Ahorro/inversión" && meta) {
@@ -1215,6 +1252,7 @@ function attachHandlers() {
         document.getElementById("f-date").value = todayISO();
         toggleMeta();
         toggleRecurring();
+        toggleCustomCategory();
       }
     });
 
@@ -1350,6 +1388,17 @@ function attachHandlers() {
         render();
       });
     }
+  }
+
+  if (activeTab === "mapa") {
+    document.querySelector('[data-action="mapa-prev"]').addEventListener("click", () => {
+      mapaMonth = shiftMonth(mapaMonth, -1);
+      render();
+    });
+    document.querySelector('[data-action="mapa-next"]').addEventListener("click", () => {
+      mapaMonth = shiftMonth(mapaMonth, 1);
+      render();
+    });
   }
 
   if (activeTab === "comparar") {

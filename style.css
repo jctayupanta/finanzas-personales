@@ -787,6 +787,20 @@ form.entry-form {
   border-bottom: 1px solid var(--border);
 }
 
+.total-line {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.total-line .value {
+  color: var(--blue);
+  font-weight: 700;
+}
+
 .legend-row {
   display: flex;
   align-items: center;
